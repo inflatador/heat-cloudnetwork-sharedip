@@ -1,0 +1,159 @@
+heat_template_version: 2015-10-15
+
+description: |
+   ####  Creates a Cloud Network suitable for north-south traffic, with a shared gateway IP.
+   ####  Author: Brian King <brian.king@rackspaceD.O.T.com>
+
+parameter_groups:
+- label: Network Settings
+  parameters:
+  - networkName
+  - networkRange
+  - allocationPoolStart
+  - allocationPoolEnd
+  - firstNetDeviceIP
+  - secondNetDeviceIP
+  - sharedGatewayIP
+
+- label: DNS Settings
+  parameters:
+    - primaryDNSIP
+    - secondaryDNSIP
+
+parameters:
+
+  networkName:
+    type: string
+    label: 'Cloud Network Name'
+    description: Name of Cloud Network
+    default: 'cloudNetwork'
+
+  sharedGatewayIP:
+    type: string
+    label: 'shared gateway IP'
+    description: gateway IP, shared between 2 net devices
+    default: '172.19.241.1'
+    constraints:
+      - custom_constraint: ip_addr
+
+
+  networkRange:
+    type: string
+    label: 'Range of Cloud Network, such as 10.1.1.0/24'
+    description: CIDR (netrange) of Cloud Network
+    constraints:
+      - custom_constraint: net_cidr
+    default: '172.19.241.0/24'
+
+  firstNetDeviceIP:
+    type: string
+    label: 'Non-HA IP of first net device in HA pair'
+    description: Non-HA IP of first net device in HA pair
+    default: '172.19.241.2'
+    constraints:
+      - custom_constraint: ip_addr
+
+  secondNetDeviceIP:
+    type: string
+    label: 'Non-HA IP of second net device in HA pair'
+    description: Non-HA IP of second net device in HA pair
+    default: '172.19.241.3'
+    constraints:
+      - custom_constraint: ip_addr
+
+  allocationPoolStart:
+    type: string
+    label: 'First available IP in pool. Recommend starting at 7th IP in range to leave room for net device reserved IPs.'
+    default: '172.19.241.7'
+    constraints:
+      - custom_constraint: ip_addr
+
+  allocationPoolEnd:
+    type: string
+    label: 'Last available IP in pool'
+    default: '172.19.241.254'
+    constraints:
+      - custom_constraint: ip_addr
+
+  primaryDNSIP:
+    type: string
+    label: 'Primary DNS Server. Must be set if this network will be used for north-south traffic.'
+    default: '69.20.0.164'
+    constraints:
+      - custom_constraint: ip_addr
+
+  secondaryDNSIP:
+    type: string
+    label: 'Secondary DNS Server. Must be set if this network will be used for north-south traffic.'
+    default: '69.20.0.196'
+    constraints:
+      - custom_constraint: ip_addr
+
+resources:
+
+  cloudNetwork:
+    type: OS::Neutron::Net
+    properties:
+      name: { get_param: [networkName] }
+
+  cloudNetworkSubnet:
+    type: OS::Neutron::Subnet
+    properties:
+      name: { get_param: [networkName] }
+      ip_version: 4
+      cidr: { get_param: [networkRange] }
+      dns_nameservers: [{ get_param: [primaryDNSIP] }, { get_param: [secondaryDNSIP] }]
+      network: { get_attr: [cloudNetwork, name] }
+      allocation_pools: [{'end': { get_param: [allocationPoolEnd]}, 'start': { get_param: [allocationPoolStart]} }]
+      gateway_ip: { get_param: [sharedGatewayIP] }
+
+  firstNetDeviceNonHAPort:
+    type: OS::Neutron::Port
+    properties:
+      fixed_ips: [{'subnet_id': { get_attr: [cloudNetworkSubnet, name] }, 'ip_address': { get_param: [firstNetDeviceIP]} }]
+      name: 'firstNetDeviceIP'
+      network: { get_attr: [cloudNetwork, name] }
+
+  secondNetDeviceNonHAPort:
+    type: OS::Neutron::Port
+    properties:
+      fixed_ips: [{'subnet_id': { get_attr: [cloudNetworkSubnet, name] }, 'ip_address': { get_param: [secondNetDeviceIP]} }]
+      name: 'secondNetDeviceIP'
+      network: { get_attr: [cloudNetwork, name] }
+
+  sharedIP:
+    type: Rackspace::Cloud::SharedIP
+    properties:
+      network_id: { get_attr: [cloudNetworkSubnet, network_id] }
+      ports: [{ get_resource: firstNetDeviceNonHAPort }, { get_resource: secondNetDeviceNonHAPort  }]
+      ip_address: { get_param: [sharedGatewayIP] }
+
+outputs:
+
+  sharedIPName:
+    value: { get_attr: [sharedIP, shared_ip_address] }
+    description: 'shared IP address'
+
+  cloudNetworkName:
+    value: { get_attr: [cloudNetwork, name] }
+    description: 'Cloud Network name'
+
+  cloudNetworkRange:
+    value: { get_attr: [cloudNetworkSubnet, cidr] }
+    description: 'Cloud Network range'
+
+  firstNetDeviceNonHAPort:
+    value: { get_param: [firstNetDeviceIP] }
+    description: 'Non-HA IP of first network device'
+
+  secondNetDeviceNonHAPort:
+    value: { get_param: [secondNetDeviceIP] }
+    description: 'Non-HA IP of second network device'
+
+  allocationPool:
+    value: { get_attr: [cloudNetworkSubnet, allocation_pools] }
+    description: 'Subnet allocation pool'
+
+  dnsServerIPs:
+    value: { get_attr: [cloudNetworkSubnet, dns_nameservers] }
+    description: 'DNS Server IPs'
